@@ -1,0 +1,9 @@
+flask
+requests
+python-dotenv
+boto3
+flask-cors
+pandas
+numpy
+statsmodels
+gunicorn
