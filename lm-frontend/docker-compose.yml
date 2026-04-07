@@ -1,0 +1,15 @@
+services:
+  lm-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      API_PREDICTION: ${API_PREDICTION:-http://localhost:8080/predict}
+      API_FORECAST: ${API_FORECAST:-http://localhost:8080/forecast}
+      API_GATEWAY_KEY: ${API_GATEWAY_KEY:-aaa-bbb-ccc-ddd}
+      PORT: 3000
+
+    
+    restart: unless-stopped
