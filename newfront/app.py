@@ -24,7 +24,7 @@ app.config.update(
     PREDICTION_API_URL=os.getenv('PREDICTION_API_URL'),
     API_KEY=os.getenv('API_GATEWAY_KEY'),
     REQUEST_TIMEOUT=10,
-    AWS_REGION=os.getenv('AWS_REGION', 'us-east-1'),
+    AWS_REGION=os.getenv('AWS_REGION', 'ap-southeast-1'),
     DYNAMODB_TABLE=os.getenv('DYNAMODB_TABLE', 'ProductEmbeddings')
 )
 
