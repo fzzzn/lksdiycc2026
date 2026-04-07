@@ -104,7 +104,7 @@ async def get_cloudwatch_error_logs(log_group: str, log_stream: Optional[str] = 
 
         query = (
             "fields @timestamp, @message "
-            "| filter @message like /ERROR|Exception|Traceback|Task timed out|Runtime\\.[A-Za-z_]+/ "
+            "| filter @message like /ERROR|Exception|Traceback|Task timed out|Runtime\\.[A-Za-z_]+|ValueError|ValidationError|error_message|Missing or invalid required field|Bad POST request/ "
             "| sort @timestamp desc "
             "| limit 20"
         )
@@ -144,7 +144,7 @@ async def get_cloudwatch_error_logs(log_group: str, log_stream: Optional[str] = 
                     logGroupName=log_group,
                     startTime=start_time,
                     endTime=end_time,
-                    filterPattern='?ERROR ?Exception ?Traceback ?"Task timed out" ?"Runtime."',
+                    filterPattern='?ERROR ?Exception ?Traceback ?"Task timed out" ?"Runtime." ?ValueError ?ValidationError ?error_message ?"Missing or invalid required field" ?"Bad POST request"',
                     limit=50
                 )
 
@@ -183,14 +183,14 @@ async def get_llm_analysis(logs: list) -> Dict[str, str]:
     2. Solution: recommendation to fix
     """
     try:
-        if not logs:
-            return {
-                "summary": "No error logs found",
-                "solution": "No specific issues detected in the log pattern"
-            }
-
         # Format logs for LLM prompt
-        logs_text = build_llm_logs_text(logs)
+        if logs:
+            logs_text = build_llm_logs_text(logs)
+        else:
+            logs_text = (
+                "No CloudWatch error logs were retrieved for this alarm in the selected "
+                "time window. Provide likely causes and troubleshooting steps for this condition."
+            )
 
         prompt = f"""Sebagai DevOps, berikan 1 ringkasan penyebab error (Summary) dan 1 rekomendasi (Solusi) dari semua log berikut:
 
