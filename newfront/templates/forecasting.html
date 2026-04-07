@@ -149,10 +149,10 @@
                 const spinner = document.getElementById('forecast-spinner');
                 
                 // Get form values
-                const productId = document.getElementById('content-id').value.trim();
+                const contentId = document.getElementById('content-id').value.trim();
                 const forecastDays = document.getElementById('forecast-days').value;
                 
-                if (!productId) {
+                if (!contentId) {
                     showAlert('Please enter a product ID', 'error');
                     return;
                 }
@@ -169,7 +169,7 @@
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
-                            product_id: productId,
+                            content_id: contentId,
                             forecast_days: parseInt(forecastDays)
                         })
                     });

@@ -135,10 +135,10 @@
                 
                 // Get form values
                 const userId = document.getElementById('user-id').value.trim();
-                const productId = document.getElementById('content-id').value.trim();
+                const contentId = document.getElementById('content-id').value.trim();
                 const userContext = document.getElementById('user-context').value;
                 
-                if (!userId || !productId) {
+                if (!userId || !contentId) {
                     showAlert('Please fill in all required fields', 'error');
                     return;
                 }
@@ -156,7 +156,7 @@
                         },
                         body: JSON.stringify({
                             user_id: userId,
-                            product_id: productId,
+                            content_id: contentId,
                             context: {
                                 user_state: userContext
                             }
