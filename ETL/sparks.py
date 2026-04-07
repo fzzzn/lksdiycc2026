@@ -55,15 +55,15 @@ user_behavior = interactions_df.groupBy("user_id").agg(
 user_features = users_df.join(user_behavior, "user_id", "left")
 
 user_content_matrix.write.mode("overwrite").parquet(
-    "s3://yourbucket/processed-data/user_content_matrix/"
+    "s3://fauzan-streamify-bucket/processed-data/user_content_matrix/"
 )
 
 content_stats.write.mode("overwrite").parquet(
-    "s3://yourbucket/processed-data/content_stats/"
+    "s3://fauzan-streamify-bucket/processed-data/content_stats/"
 )
 
 user_features.write.mode("overwrite").parquet(
-    "s3://yourbucket/processed-data/user_features/"
+    "s3://fauzan-streamify-bucket/processed-data/user_features/"
 )
 
 job.commit()
