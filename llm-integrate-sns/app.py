@@ -98,14 +98,14 @@ async def get_cloudwatch_error_logs(log_group: str, log_stream: Optional[str] = 
             logger.error("CloudWatch Logs client not initialized")
             return []
 
-        # Calculate time range: last 1 hour
+        # Calculate time range: last 3 hours to avoid missing delayed alarms.
         end_time = int(datetime.utcnow().timestamp() * 1000)
-        start_time = int((datetime.utcnow() - timedelta(hours=1)).timestamp() * 1000)
+        start_time = int((datetime.utcnow() - timedelta(hours=3)).timestamp() * 1000)
 
         query = (
-            "fields @timestamp as timestamp, @message as message "
-            "| filter message like /\\[ERROR\\]|ERROR|Exception|Traceback/ "
-            "| sort timestamp desc "
+            "fields @timestamp, @message "
+            "| filter @message like /ERROR|Exception|Traceback|Task timed out|Runtime\\.[A-Za-z_]+/ "
+            "| sort @timestamp desc "
             "| limit 20"
         )
 
@@ -134,6 +134,30 @@ async def get_cloudwatch_error_logs(log_group: str, log_stream: Optional[str] = 
                         for field in record
                     }
                     logs.append(normalize_log_entry(raw_log_entry))
+
+                if logs:
+                    logger.info(f"Retrieved {len(logs)} error logs from {log_group}")
+                    return logs
+
+                # Fallback: if Insights returns empty, pull recent events and extract error-like lines.
+                fallback_logs = cloudwatch_logs_client.filter_log_events(
+                    logGroupName=log_group,
+                    startTime=start_time,
+                    endTime=end_time,
+                    filterPattern='?ERROR ?Exception ?Traceback ?"Task timed out" ?"Runtime."',
+                    limit=50
+                )
+
+                events = fallback_logs.get("events", [])
+                logs = [
+                    normalize_log_entry(
+                        {
+                            "timestamp": str(event.get("timestamp", "N/A")),
+                            "message": event.get("message", "")
+                        }
+                    )
+                    for event in events
+                ]
                 
                 logger.info(f"Retrieved {len(logs)} error logs from {log_group}")
                 return logs
@@ -200,15 +224,36 @@ def extract_error_detail(message: str) -> str:
 
     cleaned = message.replace("\xa0", " ").strip()
 
+    # Some services wrap the actual payload under a text prefix.
+    payload_candidate = cleaned
+    if "\t" in cleaned:
+        payload_candidate = cleaned.split("\t")[-1].strip()
+
     # Prefer structured JSON error payload when available.
-    json_start = cleaned.find("{")
-    json_end = cleaned.rfind("}")
+    json_start = payload_candidate.find("{")
+    json_end = payload_candidate.rfind("}")
     if json_start != -1 and json_end > json_start:
-        json_candidate = cleaned[json_start:json_end + 1]
+        json_candidate = payload_candidate[json_start:json_end + 1]
         try:
             parsed = json.loads(json_candidate)
-            error_message = parsed.get("error_message")
-            error_type = parsed.get("error_type")
+            if isinstance(parsed.get("body"), str):
+                try:
+                    parsed_body = json.loads(parsed["body"])
+                    if isinstance(parsed_body, dict):
+                        parsed = parsed_body
+                except json.JSONDecodeError:
+                    pass
+
+            error_message = (
+                parsed.get("error_message")
+                or parsed.get("errorMessage")
+                or parsed.get("message")
+            )
+            error_type = (
+                parsed.get("error_type")
+                or parsed.get("errorType")
+                or parsed.get("type")
+            )
             if error_type and error_message:
                 return f"{error_type}: {error_message}"
             if error_message:
@@ -441,7 +486,6 @@ async def handle_notification(message: Dict[str, Any]) -> Dict[str, Any]:
         
         if not log_group:
             logger.warning(f"No log group mapping found for alarm: {alarm_name}")
-            # Still try to use alarm name as log group
             log_group = f"/aws/lambda/{alarm_name}"
 
         logger.info(f"Using log group: {log_group}")
