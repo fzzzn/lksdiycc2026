@@ -1,0 +1,101 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: vars
+        run: |
+          REPOSITORY_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          TIMESTAMP=$(date -u +"%Y-%m-%d-%H-%M-%S")
+          echo "image=ghcr.io/${REPOSITORY_LOWER}:frontend-${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./lm-frontend
+          push: true
+          tags: ${{ steps.vars.outputs.image }}
+
+  build-llm-integrate-sns:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: vars
+        run: |
+          REPOSITORY_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          TIMESTAMP=$(date -u +"%Y-%m-%d-%H-%M-%S")
+          echo "image=ghcr.io/${REPOSITORY_LOWER}:llm-webhook-${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push llm-webhook image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./llm-integrate-sns
+          push: true
+          tags: ${{ steps.vars.outputs.image }}
+
+  build-example-dataset-csv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: Generate CSV and package raw-data
+        run: |
+          cd dataset
+          python dataset.py
+          mkdir -p raw-data
+          mv *.csv raw-data/
+          zip -r raw-data.zip raw-data
+
+      - name: Upload dataset artifacts to release tag
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dataset
+          name: Dataset
+          make_latest: false
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          files: |
+            dataset/raw-data/*.csv
+            dataset/raw-data.zip
