@@ -81,3 +81,5 @@ cd newfront
 pip install -r requirements.txt
 python app.py
 ```
+
+have a great day, and happy coding! 🚀
