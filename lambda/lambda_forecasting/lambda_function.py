@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta
 import logging
 import random
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Sequence, Tuple, Optional
 from boto3.dynamodb.conditions import Key
 import math
 
@@ -24,11 +24,11 @@ USER_INTERACTIONS_TABLE = os.environ.get('USER_INTERACTIONS_TABLE', 'UserInterac
 CONTENT_EMBEDDINGS_TABLE = os.environ.get('CONTENT_EMBEDDINGS_TABLE', 'ContentEmbeddings')
 STREAM_HISTORY_TABLE = os.environ.get('STREAM_HISTORY_TABLE', 'StreamHistory')
 
-def calculate_mean(data: List[float]) -> float:
+def calculate_mean(data: Sequence[float | int]) -> float:
     """Calculate arithmetic mean."""
     return sum(data) / len(data) if data else 0
 
-def calculate_stdev(data: List[float]) -> float:
+def calculate_stdev(data: Sequence[float | int]) -> float:
     """Calculate sample standard deviation."""
     if len(data) < 2:
         return 0
@@ -131,7 +131,7 @@ def load_forecasting_model(bucket: str, key: str) -> SalesForecastingModel:
         return SalesForecastingModel()
 
 
-def get_historical_stream_data(content_id: str = None, content_type: str = None, days: int = 90) -> List[Dict[str, Any]]:
+def get_historical_stream_data(content_id: Optional[str] = None, content_type: Optional[str] = None, days: int = 90) -> List[Dict[str, Any]]:
     """Retrieve historical stream data from DynamoDB."""
     try:
         end_date = datetime.now()
@@ -192,7 +192,7 @@ def fill_missing_dates(data: Dict[str, float], start_date: datetime, end_date: d
     return result
 
 
-def generate_forecast(content_id: str = None, content_type: str = None, method: str = 'moving_average',
+def generate_forecast(content_id: Optional[str] = None, content_type: Optional[str] = None, method: str = 'moving_average',
                      periods: int = 30, metric: str = 'streams') -> Dict[str, Any]:
     """Generate a stream forecast using the specified method."""
     try:
@@ -251,17 +251,68 @@ def generate_forecast(content_id: str = None, content_type: str = None, method: 
         }
 
 
+def parse_request_body(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse and validate the incoming request body."""
+    if not isinstance(event, dict):
+        raise ValueError("Request event must be a JSON object")
+
+    body = event.get('body', event)
+
+    if body in (None, ''):
+        raise ValueError("Request body is required")
+
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Request body must be valid JSON") from exc
+
+    if not isinstance(body, dict):
+        raise ValueError("Request body must be a JSON object")
+
+    content_id = body.get('content_id')
+    if not isinstance(content_id, str) or not content_id.strip():
+        raise ValueError("Missing or invalid required field: content_id")
+
+    content_type = body.get('content_type')
+    if content_type is not None and (not isinstance(content_type, str) or not content_type.strip()):
+        raise ValueError("Invalid content_type")
+
+    method = body.get('method', 'moving_average')
+    if not isinstance(method, str) or not method.strip():
+        raise ValueError("Invalid method")
+
+    periods = body.get('periods', 30)
+    try:
+        periods = int(periods)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Periods must be an integer") from exc
+
+    if periods < 1:
+        raise ValueError("Periods must be at least 1")
+
+    metric = body.get('metric', 'streams')
+    if not isinstance(metric, str) or not metric.strip():
+        raise ValueError("Invalid metric")
+
+    return {
+        'content_id': content_id.strip() if isinstance(content_id, str) else None,
+        'content_type': content_type.strip() if isinstance(content_type, str) else None,
+        'method': method.strip(),
+        'periods': periods,
+        'metric': metric.strip(),
+    }
+
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     try:
-        body = event
-        if isinstance(event.get('body'), str):
-            body = json.loads(event['body'])
+        body = parse_request_body(event)
 
-        content_id = body.get('content_id')
-        content_type = body.get('content_type')
-        method = body.get('method', 'moving_average')
-        periods = int(body.get('periods', 30))
-        metric = body.get('metric', 'streams')
+        content_id = body['content_id']
+        content_type = body['content_type']
+        method = body['method']
+        periods = body['periods']
+        metric = body['metric']
 
         valid_methods = ['moving_average', 'exponential_smoothing', 'linear_trend', 'seasonal']
         if method not in valid_methods:
@@ -312,6 +363,20 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'status': 'success'
             })
         }
+
+    except ValueError as e:
+        payload = {
+            'message': 'Bad POST request',
+            'error_type': type(e).__name__,
+            'error_message': str(e),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+        if context is not None and getattr(context, 'aws_request_id', None):
+            payload['request_id'] = context.aws_request_id
+
+        logger.error(json.dumps(payload, default=str))
+        raise
 
     except Exception as e:
         logger.error(f"Handler error: {str(e)}", exc_info=True)

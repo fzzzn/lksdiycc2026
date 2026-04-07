@@ -172,14 +172,39 @@ def get_fallback_features(user_id: str, content_id: str) -> Tuple[Dict[str, Any]
     return user_features, content_features
 
 
+def parse_request_body(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse and validate the incoming request body."""
+    if not isinstance(event, dict):
+        raise ValueError("Request event must be a JSON object")
+
+    body = event.get('body', event)
+
+    if body in (None, ''):
+        raise ValueError("Request body is required")
+
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Request body must be valid JSON") from exc
+
+    if not isinstance(body, dict):
+        raise ValueError("Request body must be a JSON object")
+
+    for field in ('user_id', 'content_id'):
+        value = body.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"Missing or invalid required field: {field}")
+
+    return body
+
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     try:
-        body = event
-        if isinstance(event.get('body'), str):
-            body = json.loads(event['body'])
+        body = parse_request_body(event)
 
-        user_id = body.get('user_id', 'default')
-        content_id = body.get('content_id', 'default')
+        user_id = body['user_id'].strip()
+        content_id = body['content_id'].strip()
 
         model = load_model(
             os.environ.get('MODEL_BUCKET', 'streamify-ml'),
@@ -212,6 +237,20 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'content_features': content_features
             })
         }
+
+    except ValueError as e:
+        payload = {
+            'message': 'Bad POST request',
+            'error_type': type(e).__name__,
+            'error_message': str(e),
+            'timestamp': datetime.now().isoformat(),
+        }
+
+        if context is not None and getattr(context, 'aws_request_id', None):
+            payload['request_id'] = context.aws_request_id
+
+        logger.error(json.dumps(payload, default=str))
+        raise
 
     except Exception as e:
         logger.error(f"Handler error: {str(e)}", exc_info=True)
