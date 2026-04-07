@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import asyncio
+import re
 import requests
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
@@ -101,7 +102,12 @@ async def get_cloudwatch_error_logs(log_group: str, log_stream: Optional[str] = 
         end_time = int(datetime.utcnow().timestamp() * 1000)
         start_time = int((datetime.utcnow() - timedelta(hours=1)).timestamp() * 1000)
 
-        query = "fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 5"
+        query = (
+            "fields @timestamp as timestamp, @message as message "
+            "| filter message like /\\[ERROR\\]|ERROR|Exception|Traceback/ "
+            "| sort timestamp desc "
+            "| limit 20"
+        )
 
         # Start query execution
         response = cloudwatch_logs_client.start_query(
@@ -123,11 +129,11 @@ async def get_cloudwatch_error_logs(log_group: str, log_stream: Optional[str] = 
             if status == "Complete":
                 logs = []
                 for record in result["results"]:
-                    log_entry = {
+                    raw_log_entry = {
                         field["field"]: field["value"]
                         for field in record
                     }
-                    logs.append(log_entry)
+                    logs.append(normalize_log_entry(raw_log_entry))
                 
                 logger.info(f"Retrieved {len(logs)} error logs from {log_group}")
                 return logs
@@ -160,10 +166,7 @@ async def get_llm_analysis(logs: list) -> Dict[str, str]:
             }
 
         # Format logs for LLM prompt
-        logs_text = "\n".join([
-            f"[{log.get('@timestamp', 'N/A')}] {log.get('@message', '')}"
-            for log in logs
-        ])
+        logs_text = build_llm_logs_text(logs)
 
         prompt = f"""Sebagai DevOps, berikan 1 ringkasan penyebab error (Summary) dan 1 rekomendasi (Solusi) dari semua log berikut:
 
@@ -185,6 +188,80 @@ Berikan response dalam format JSON dengan keys "summary" dan "solution"."""
     except Exception as e:
         logger.error(f"Error getting LLM analysis: {str(e)}")
         return {"summary": "Error during analysis", "solution": str(e)}
+
+
+def extract_error_detail(message: str) -> str:
+    """
+    Extract core error detail from CloudWatch message.
+    Supports JSON payload in message and Python traceback patterns.
+    """
+    if not message:
+        return ""
+
+    cleaned = message.replace("\xa0", " ").strip()
+
+    # Prefer structured JSON error payload when available.
+    json_start = cleaned.find("{")
+    json_end = cleaned.rfind("}")
+    if json_start != -1 and json_end > json_start:
+        json_candidate = cleaned[json_start:json_end + 1]
+        try:
+            parsed = json.loads(json_candidate)
+            error_message = parsed.get("error_message")
+            error_type = parsed.get("error_type")
+            if error_type and error_message:
+                return f"{error_type}: {error_message}"
+            if error_message:
+                return error_message
+        except json.JSONDecodeError:
+            pass
+
+    traceback_match = re.search(r"([A-Za-z_]+Error):\s*(.+)", cleaned)
+    if traceback_match:
+        return f"{traceback_match.group(1)}: {traceback_match.group(2).strip()}"
+
+    return cleaned
+
+
+def normalize_log_entry(log_entry: Dict[str, str]) -> Dict[str, str]:
+    """Normalize CloudWatch result fields to stable keys across query variants."""
+    timestamp = (
+        log_entry.get("timestamp")
+        or log_entry.get("@timestamp")
+        or "N/A"
+    )
+    message = (
+        log_entry.get("message")
+        or log_entry.get("@message")
+        or ""
+    )
+
+    normalized = {
+        "timestamp": timestamp,
+        "message": message,
+        "error": extract_error_detail(message)
+    }
+    return normalized
+
+
+def build_llm_logs_text(logs: list) -> str:
+    """Build compact, deduplicated error context for LLM prompt."""
+    seen = set()
+    lines = []
+
+    for log in logs:
+        timestamp = log.get("timestamp") or log.get("@timestamp") or "N/A"
+        message = log.get("error") or log.get("message") or log.get("@message") or ""
+        compact = " ".join(message.split())
+        if not compact or compact in seen:
+            continue
+        seen.add(compact)
+        lines.append(f"[{timestamp}] {compact}")
+
+    if not lines:
+        return "No parsable error logs found"
+
+    return "\n".join(lines[:10])
 
 
 async def call_ollama(prompt: str) -> Dict[str, str]:
