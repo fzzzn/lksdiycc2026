@@ -16,7 +16,7 @@ WORKDIR /app
 
 COPY --from=builder /workspace/lm-frontend /app/lm-frontend
 COPY --from=builder /workspace/templates /app/templates
-COPY .env /app/.env
+# COPY .env /app/.env
 
 EXPOSE 3000
 
